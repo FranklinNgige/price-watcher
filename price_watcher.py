@@ -281,6 +281,8 @@ class PriceWatcher:
         """Get price using Selenium for JavaScript-heavy sites"""
         logger.info("Falling back to Selenium for price extraction")
         
+        # Replace this section
+        """
         options = Options()
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
@@ -292,73 +294,14 @@ class PriceWatcher:
         driver = None
         try:
             driver = webdriver.Chrome(options=options)
-            driver.get(url)
-            logger.info("Page loaded in Selenium")
-            
-            # Wait for page to fully load
-            time.sleep(5)
-            
-            # Walmart-specific selectors for the main product (not sponsored)
-            selectors = [
-                # Primary main product price
-                "div[data-testid='price-wrap'] span[itemprop='price']",
-                # Fallback selectors
-                "[data-automation-id='product-price']:not([data-automation-id*='sponsored'])",
-                "[data-testid='price-view'] span",
-                ".price-characteristic",
-                ".prod-PriceSection [aria-hidden='false']"
-            ]
-            
-            for selector in selectors:
-                logger.info(f"Trying selector: {selector}")
-                try:
-                    # Wait for element to be present
-                    WebDriverWait(driver, SELENIUM_WAIT_TIME).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                    )
-                    
-                    # Get all matching elements
-                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                    logger.info(f"Found {len(elements)} elements with selector {selector}")
-                    
-                    if elements:
-                        # Prioritize the first element (usually the main product price)
-                        price_text = elements[0].text.strip()
-                        logger.info(f"Found price text: {price_text}")
-                        
-                        # Extract numeric price
-                        price = self.extract_price(price_text)
-                        if price is not None:
-                            return price
-                except TimeoutException:
-                    continue
-                except Exception as e:
-                    logger.error(f"Error with selector {selector}: {e}")
-            
-            # As a last resort, take a screenshot to debug
-            try:
-                timestamp = int(time.time())
-                screenshot_path = f"{SCREENSHOT_DIR}/debug_screenshot_{timestamp}.png"
-                driver.save_screenshot(screenshot_path)
-                logger.info(f"Saved debug screenshot to {screenshot_path}")
-                
-                # Clean up old screenshots (keep only the last 5)
-                self.cleanup_screenshots()
-            except Exception as e:
-                logger.error(f"Could not save screenshot: {e}")
-            
-            logger.warning("Could not find price with any selector")
-            return None
-        except Exception as e:
-            logger.error(f"Error with Selenium: {e}")
-            return None
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                    logger.info("Chrome process terminated")
-                except Exception as e:
-                    logger.error(f"Error terminating Chrome: {e}")
+        """
+        
+        # With this new code
+        from webdriver_setup import get_chrome_driver
+        
+        driver = None
+        try:
+            driver = get_chrome_driver()
     
     def cleanup_screenshots(self, max_to_keep=5):
         """Clean up old screenshots, keeping only the most recent ones"""
