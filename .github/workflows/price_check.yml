@@ -2,7 +2,7 @@ name: Price Checker
 
 on:
   schedule:
-    +  - cron: '*/30 * * * *'  # Runs every 30 minutes
+    - cron: '*/30 * * * *'  # Runs every 30 minutes
     # Use '*/30 * * * *' for every 30 minutes
 
 jobs:
