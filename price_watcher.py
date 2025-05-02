@@ -12,13 +12,9 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # Set up logging
 logging.basicConfig(
@@ -75,7 +71,6 @@ class PriceWatcher:
                 logger.error(f"Error loading data from S3: {e}")
                 self.items = {}
         else:
-            # Load from local file
             if os.path.exists(self.data_file):
                 try:
                     with open(self.data_file, 'r') as f:
@@ -97,7 +92,6 @@ class PriceWatcher:
             except Exception as e:
                 logger.error(f"Error saving data to S3: {e}")
         else:
-            # Save to local file
             with open(self.data_file, 'w') as f:
                 json.dump(self.items, f, indent=2)
             logger.info(f"Saved price data: {len(self.items)} items")
@@ -164,7 +158,6 @@ class PriceWatcher:
         changes = []
         
         for url, item in self.items.items():
-            # Verify the URL is still valid (no redirection)
             logger.info(f"Verifying product URL: {url}")
             try:
                 head_response = requests.head(url, allow_redirects=False, timeout=DEFAULT_TIMEOUT)
@@ -180,20 +173,16 @@ class PriceWatcher:
                             "new_value": new_url,
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         })
-                        # Update the URL in our data
                         self.items[url]["previous_url"] = url
                         self.items[url]["url"] = new_url
             except requests.exceptions.RequestException as e:
                 logger.error(f"Error checking URL redirection: {e}")
             
-            # Check the price
             price = self.get_price(url, item["name"])
             
             if price is not None:
-                # Update last checked timestamp
                 item["last_checked"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Check if this is the first time we're checking or if the price has changed
                 if item["current_price"] is None:
                     logger.info(f"Initial price for {item['name']}: ${price}")
                     item["current_price"] = price
@@ -201,8 +190,6 @@ class PriceWatcher:
                     logger.info(f"Price change for {item['name']}: ${item['current_price']} -> ${price}")
                     item["previous_price"] = item["current_price"]
                     item["current_price"] = price
-                    
-                    # Record the change for notification
                     changes.append({
                         "name": item["name"],
                         "url": url,
@@ -216,7 +203,6 @@ class PriceWatcher:
             else:
                 logger.warning(f"Could not retrieve price for {item['name']}")
         
-        # Save updated data
         if changes:
             logger.info(f"Detected {len(changes)} changes")
             self.save_data()
@@ -233,10 +219,9 @@ class PriceWatcher:
         logger.info(f"Fetching price for {name} ({url})")
         
         try:
-            # First try a simple GET request with headers
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Accept': 'text/html,application/xhtml+xml',
                 'Accept-Language': 'en-US,en;q=0.9'
             }
             response = requests.get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
@@ -244,88 +229,88 @@ class PriceWatcher:
             
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Try different price selectors (Walmart specific)
                 selectors = [
                     '[itemprop="price"]',
                     '.price-characteristic',
                     '[data-automation-id="price-value"]',
                     '.prod-PriceSection [aria-hidden="false"]',
                     'span.price-group',
-                    # Try more specific Walmart selectors for the main product
                     '[data-testid="price-wrap"] span.inline-flex span.primary'
                 ]
                 
                 for selector in selectors:
-                    price_element = soup.select_one(selector)
-                    if price_element:
-                        price_text = price_element.get_text().strip()
-                        logger.info(f"Found price with selector {selector}: {price_text}")
-                        
-                        # Extract numeric price value
-                        price = self.extract_price(price_text)
+                    element = soup.select_one(selector)
+                    if element:
+                        text = element.get_text().strip()
+                        logger.info(f"Found price with selector {selector}: {text}")
+                        price = self.extract_price(text)
                         if price is not None:
                             return price
                 
-                # If we didn't find a price with the selectors, try with Selenium
                 return self.get_price_with_selenium(url)
             else:
                 logger.error(f"Failed to fetch page, status code: {response.status_code}")
                 return None
         except Exception as e:
             logger.error(f"Error fetching price with requests: {e}")
-            # Fall back to Selenium
             return self.get_price_with_selenium(url)
     
     def get_price_with_selenium(self, url):
         """Get price using Selenium for JavaScript-heavy sites"""
         logger.info("Falling back to Selenium for price extraction")
-        
-        # Replace this section
-        """
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
-        
-        driver = None
-        try:
-            driver = webdriver.Chrome(options=options)
-        """
-        
-        # With this new code
         from webdriver_setup import get_chrome_driver
         
         driver = None
         try:
             driver = get_chrome_driver()
+            driver.get(url)
+            
+            wait = WebDriverWait(driver, SELENIUM_WAIT_TIME)
+            price_el = wait.until(EC.presence_of_element_located((
+                By.CSS_SELECTOR,
+                ','.join([
+                    '[itemprop="price"]',
+                    '.price-characteristic',
+                    '[data-automation-id="price-value"]',
+                    '.prod-PriceSection [aria-hidden="false"]',
+                    'span.price-group',
+                    '[data-testid="price-wrap"] span.inline-flex span.primary'
+                ])
+            )))
+            
+            price_text = price_el.text.strip()
+            logger.info(f"Found price with Selenium: {price_text}")
+            return self.extract_price(price_text)
+        
+        except Exception as e:
+            logger.error(f"Error fetching price with Selenium: {e}")
+            return None
+        
+        finally:
+            if driver:
+                driver.quit()
+            self.cleanup_screenshots()
     
     def cleanup_screenshots(self, max_to_keep=5):
         """Clean up old screenshots, keeping only the most recent ones"""
         try:
-            screenshots = [os.path.join(SCREENSHOT_DIR, f) for f in os.listdir(SCREENSHOT_DIR) if f.startswith("debug_screenshot_")]
+            screenshots = [
+                os.path.join(SCREENSHOT_DIR, f)
+                for f in os.listdir(SCREENSHOT_DIR)
+                if f.startswith("debug_screenshot_")
+            ]
             if len(screenshots) > max_to_keep:
-                # Sort by modification time (newest first)
                 screenshots.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                # Remove all but the most recent ones
-                for screenshot in screenshots[max_to_keep:]:
-                    os.remove(screenshot)
-                    logger.debug(f"Removed old screenshot: {screenshot}")
+                for old in screenshots[max_to_keep:]:
+                    os.remove(old)
+                    logger.debug(f"Removed old screenshot: {old}")
         except Exception as e:
             logger.error(f"Error cleaning up screenshots: {e}")
     
     def extract_price(self, price_text):
         """Extract numeric price from text"""
-        # Remove currency symbols, commas, and other non-numeric characters
         try:
-            # Handle various price formats
-            price_text = price_text.replace(',', '')
-            price_text = price_text.replace('$', '')
-            
-            # Extract first valid number
+            price_text = price_text.replace(',', '').replace('$', '')
             import re
             match = re.search(r'(\d+\.\d+|\d+)', price_text)
             if match:
@@ -344,69 +329,41 @@ class PriceWatcher:
             return False
         
         try:
-            # Create message
             msg = MIMEMultipart("alternative")
             msg["Subject"] = "Price Watcher Alert: Price Changes Detected"
             msg["From"] = self.email_config["sender"]
             msg["To"] = self.email_config["recipient"]
             
-            # Build plain text content
-            text_content = "Price Watcher has detected the following changes:\n\n"
-            for change in changes:
-                if change["change_type"] == "price":
-                    text_content += f"{change['name']}\n"
-                    text_content += f"URL: {change['url']}\n"
-                    text_content += f"Price changed: ${change['old_value']} -> ${change['new_value']}\n"
-                    text_content += f"Detected at: {change['timestamp']}\n\n"
-                elif change["change_type"] == "url":
-                    text_content += f"{change['name']}\n"
-                    text_content += f"URL has changed:\n"
-                    text_content += f"Old: {change['old_value']}\n"
-                    text_content += f"New: {change['new_value']}\n"
-                    text_content += f"Detected at: {change['timestamp']}\n\n"
+            text = "Price Watcher has detected the following changes:\n\n"
+            for c in changes:
+                text += f"{c['name']}\nURL: {c['url']}\n"
+                if c["change_type"] == "price":
+                    text += f"Price: ${c['old_value']} -> ${c['new_value']}\n"
+                else:
+                    text += f"URL: {c['old_value']} -> {c['new_value']}\n"
+                text += f"At: {c['timestamp']}\n\n"
             
-            # Build HTML content
-            html_content = """
-            <html>
-            <body>
-            <h2>Price Watcher Alert</h2>
-            <p>The following changes have been detected:</p>
-            """
+            html = "<html><body><h2>Price Watcher Alert</h2>"
+            for c in changes:
+                html += f"<div style='border:1px solid #ccc;padding:10px;margin:10px;'>"
+                html += f"<h3>{c['name']}</h3>"
+                if c["change_type"] == "price":
+                    html += f"<p><strong>Price:</strong> ${c['old_value']} → ${c['new_value']}</p>"
+                else:
+                    html += f"<p><strong>URL:</strong> <a href='{c['new_value']}'>{c['new_value']}</a></p>"
+                html += f"<p><em>At: {c['timestamp']}</em></p>"
+                html += "</div>"
+            html += "</body></html>"
             
-            for change in changes:
-                html_content += "<div style='margin-bottom: 20px; padding: 10px; border: 1px solid #ccc;'>"
-                html_content += f"<h3>{change['name']}</h3>"
-                
-                if change["change_type"] == "price":
-                    html_content += f"<p><a href='{change['url']}'>View Product</a></p>"
-                    html_content += f"<p><strong>Price changed:</strong> ${change['old_value']} → ${change['new_value']}</p>"
-                elif change["change_type"] == "url":
-                    html_content += "<p><strong>URL has changed:</strong></p>"
-                    html_content += f"<p>Old: <a href='{change['old_value']}'>{change['old_value']}</a></p>"
-                    html_content += f"<p>New: <a href='{change['new_value']}'>{change['new_value']}</a></p>"
-                
-                html_content += f"<p><em>Detected at: {change['timestamp']}</em></p>"
-                html_content += "</div>"
+            msg.attach(MIMEText(text, "plain"))
+            msg.attach(MIMEText(html, "html"))
             
-            html_content += """
-            </body>
-            </html>
-            """
-            
-            # Attach parts
-            part1 = MIMEText(text_content, "plain")
-            part2 = MIMEText(html_content, "html")
-            msg.attach(part1)
-            msg.attach(part2)
-            
-            # Send email
             with smtplib.SMTP_SSL(self.email_config["smtp_server"], self.email_config["smtp_port"]) as server:
                 server.login(self.email_config["username"], self.email_config["password"])
                 server.send_message(msg)
             
             logger.info(f"Sent notification email to {self.email_config['recipient']}")
             return True
-            
         except Exception as e:
             logger.error(f"Failed to send email notification: {e}")
             return False
@@ -415,67 +372,45 @@ def main():
     parser = argparse.ArgumentParser(description="Track prices of products online")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
     
-    # Add item command
-    add_parser = subparsers.add_parser("add", help="Add an item to track")
-    add_parser.add_argument("url", help="URL of the product to track")
-    add_parser.add_argument("--name", "-n", help="Name for the product (optional)")
+    add_p = subparsers.add_parser("add", help="Add an item to track")
+    add_p.add_argument("url", help="URL of the product to track")
+    add_p.add_argument("--name", "-n", help="Name for the product (optional)")
     
-    # Remove item command
-    remove_parser = subparsers.add_parser("remove", help="Remove an item from tracking")
-    remove_parser.add_argument("url", help="URL of the product to remove")
+    rem_p = subparsers.add_parser("remove", help="Remove an item from tracking")
+    rem_p.add_argument("url", help="URL of the product to remove")
     
-    # List items command
     subparsers.add_parser("list", help="List all tracked items")
-    
-    # Check prices command
-    check_parser = subparsers.add_parser("check", help="Check prices for all tracked items")
-    
-    # Storage option
+    check_p = subparsers.add_parser("check", help="Check prices for all tracked items")
     parser.add_argument("--s3", action="store_true", help="Use S3 for storage instead of local files")
     
-    # Parse arguments
     args = parser.parse_args()
     
-    # Set up email configuration from environment variables
-    email_config = None
     email_user = os.environ.get("EMAIL_USER")
     email_pass = os.environ.get("EMAIL_PASS")
-    alert_to = os.environ.get("ALERT_TO")
-    
+    alert_to   = os.environ.get("ALERT_TO")
+    email_cfg = None
     if email_user and email_pass and alert_to:
-        email_config = {
-            "sender": email_user,
+        email_cfg = {
+            "sender":    email_user,
             "recipient": alert_to,
-            "smtp_server": "smtp.gmail.com",  # Assuming Gmail, adjust if needed
-            "smtp_port": 465,
-            "username": email_user,
-            "password": email_pass
+            "smtp_server": "smtp.gmail.com",
+            "smtp_port":   465,
+            "username":    email_user,
+            "password":    email_pass
         }
-        logger.info("Loaded email configuration from environment variables")
+        logger.info("Loaded email configuration from environment")
     
-    # Initialize price watcher
-    watcher = PriceWatcher(email_config=email_config, use_s3=args.s3)
+    watcher = PriceWatcher(email_config=email_cfg, use_s3=args.s3)
     
-    # Process command
     if args.command == "add":
         watcher.add_item(args.url, args.name)
     elif args.command == "remove":
         watcher.remove_item(args.url)
     elif args.command == "list":
-        items = watcher.list_items()
-        if items:
-            print("\nTracked Items:")
-            for i, item in enumerate(items, 1):
-                print(f"{i}. {item['name']}")
-                print(f"   URL: {item['url']}")
-                print(f"   Current Price: ${item['current_price'] if item['current_price'] else 'Not checked yet'}")
-                print(f"   Last Checked: {item['last_checked'] if item['last_checked'] else 'Never'}")
-                print()
-    elif args.command == "check" or args.command is None:
-        # If no command provided, default to checking prices
+        for i, itm in enumerate(watcher.list_items(), 1):
+            print(f"{i}. {itm['name']}: {itm['url']} — Current: {itm['current_price']}, Last checked: {itm['last_checked']}")
+    else:  # check or no command
         watcher.check_prices()
-    else:
-        parser.print_help()
 
 if __name__ == "__main__":
     main()
