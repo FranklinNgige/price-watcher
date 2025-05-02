@@ -334,6 +334,7 @@ class PriceWatcher:
             msg["From"] = self.email_config["sender"]
             msg["To"] = self.email_config["recipient"]
             
+            # Build plain-text body
             text = "Price Watcher has detected the following changes:\n\n"
             for c in changes:
                 text += f"{c['name']}\nURL: {c['url']}\n"
@@ -343,9 +344,10 @@ class PriceWatcher:
                     text += f"URL: {c['old_value']} -> {c['new_value']}\n"
                 text += f"At: {c['timestamp']}\n\n"
             
+            # Build HTML body
             html = "<html><body><h2>Price Watcher Alert</h2>"
             for c in changes:
-                html += f"<div style='border:1px solid #ccc;padding:10px;margin:10px;'>"
+                html += "<div style='border:1px solid #ccc;padding:10px;margin:10px;'>"
                 html += f"<h3>{c['name']}</h3>"
                 if c["change_type"] == "price":
                     html += f"<p><strong>Price:</strong> ${c['old_value']} → ${c['new_value']}</p>"
@@ -358,8 +360,17 @@ class PriceWatcher:
             msg.attach(MIMEText(text, "plain"))
             msg.attach(MIMEText(html, "html"))
             
-            with smtplib.SMTP_SSL(self.email_config["smtp_server"], self.email_config["smtp_port"]) as server:
+            port = self.email_config["smtp_port"]
+            host = self.email_config["smtp_server"]
+            
+            if port == 465:
+                server = smtplib.SMTP_SSL(host, port)
                 server.login(self.email_config["username"], self.email_config["password"])
+            else:
+                # plaintext SMTP (no SSL), e.g. localhost:1025 debug server
+                server = smtplib.SMTP(host, port)
+            
+            with server:
                 server.send_message(msg)
             
             logger.info(f"Sent notification email to {self.email_config['recipient']}")
@@ -391,8 +402,8 @@ def main():
     email_cfg = None
     if email_user and email_pass and alert_to:
         email_cfg = {
-            "sender":    email_user,
-            "recipient": alert_to,
+            "sender":      email_user,
+            "recipient":   alert_to,
             "smtp_server": "smtp.gmail.com",
             "smtp_port":   465,
             "username":    email_user,
