@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:      # manual trigger from the Actions UI
-  schedule:               # timed trigger
-    - cron: '*/30 * * * *' # Runs every 30 minutes
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'  # Every 30 minutes
 
 jobs:
   check-prices:
@@ -25,17 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 selenium
 
-      - name: Install Chrome and WebDriver
+      - name: Install Chromium & Chromedriver
         run: |
           sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1)
-          wget https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION} -O chrome_version
-          CHROME_DRIVER_VERSION=$(cat chrome_version)
-          wget https://chromedriver.storage.googleapis.com/${CHROME_DRIVER_VERSION}/chromedriver_linux64.zip
-          unzip chromedriver_linux64.zip
-          sudo mv chromedriver /usr/local/bin/
-          sudo chmod +x /usr/local/bin/chromedriver
+          sudo apt-get install -y chromium-browser chromium-chromedriver
+          echo "CHROME_BIN=/usr/bin/chromium-browser" >> $GITHUB_ENV
 
       - name: Run price check
         env:
