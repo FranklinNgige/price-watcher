@@ -6,6 +6,7 @@ import logging
 import argparse
 import smtplib
 import requests
+import io
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -26,31 +27,80 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_TIMEOUT = 15
+SELENIUM_WAIT_TIME = 5
+SCREENSHOT_DIR = "debug_screenshots"
+
 class PriceWatcher:
-    def __init__(self, data_file='price_data.json', email_config=None):
+    def __init__(self, data_file='price_data.json', email_config=None, use_s3=False):
+        """Initialize the price watcher with optional S3 support"""
         self.data_file = data_file
         self.items = {}
         self.email_config = email_config
+        self.use_s3 = use_s3
+        
+        # If using S3, initialize boto3 client
+        if self.use_s3:
+            try:
+                import boto3
+                self.s3_bucket = os.environ.get('BUCKET_NAME')
+                if not self.s3_bucket:
+                    logger.warning("BUCKET_NAME environment variable not set. Falling back to local storage.")
+                    self.use_s3 = False
+                else:
+                    self.s3 = boto3.client('s3')
+                    logger.info(f"Using S3 bucket: {self.s3_bucket}")
+            except ImportError:
+                logger.warning("boto3 not installed. Falling back to local storage.")
+                self.use_s3 = False
+        
+        # Create screenshot directory if it doesn't exist
+        if not os.path.exists(SCREENSHOT_DIR):
+            os.makedirs(SCREENSHOT_DIR)
+        
         self.load_data()
         
     def load_data(self):
-        """Load saved price data from file"""
-        if os.path.exists(self.data_file):
+        """Load saved price data from file or S3"""
+        if self.use_s3 and self.s3_bucket:
             try:
-                with open(self.data_file, 'r') as f:
-                    self.items = json.load(f)
-                logger.info(f"Loaded previous price data: {len(self.items)} items")
-            except json.JSONDecodeError:
-                logger.warning(f"Could not parse {self.data_file}, starting with empty data")
+                obj = self.s3.get_object(Bucket=self.s3_bucket, Key=self.data_file)
+                self.items = json.load(io.BytesIO(obj['Body'].read()))
+                logger.info(f"Loaded {len(self.items)} items from S3")
+            except self.s3.exceptions.NoSuchKey:
+                logger.info("No S3 data file yet, starting fresh")
+                self.items = {}
+            except Exception as e:
+                logger.error(f"Error loading data from S3: {e}")
                 self.items = {}
         else:
-            logger.info("No previous data file found, starting fresh")
+            # Load from local file
+            if os.path.exists(self.data_file):
+                try:
+                    with open(self.data_file, 'r') as f:
+                        self.items = json.load(f)
+                    logger.info(f"Loaded previous price data: {len(self.items)} items")
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not parse {self.data_file}, starting with empty data")
+                    self.items = {}
+            else:
+                logger.info("No previous data file found, starting fresh")
     
     def save_data(self):
-        """Save price data to file"""
-        with open(self.data_file, 'w') as f:
-            json.dump(self.items, f, indent=2)
-        logger.info(f"Saved price data: {len(self.items)} items")
+        """Save price data to file or S3"""
+        if self.use_s3 and self.s3_bucket:
+            try:
+                data = json.dumps(self.items, indent=2).encode()
+                self.s3.put_object(Bucket=self.s3_bucket, Key=self.data_file, Body=data)
+                logger.info(f"Saved {len(self.items)} items to S3")
+            except Exception as e:
+                logger.error(f"Error saving data to S3: {e}")
+        else:
+            # Save to local file
+            with open(self.data_file, 'w') as f:
+                json.dump(self.items, f, indent=2)
+            logger.info(f"Saved price data: {len(self.items)} items")
     
     def add_item(self, url, name=None):
         """Add a new item to track"""
@@ -117,7 +167,7 @@ class PriceWatcher:
             # Verify the URL is still valid (no redirection)
             logger.info(f"Verifying product URL: {url}")
             try:
-                head_response = requests.head(url, allow_redirects=False, timeout=10)
+                head_response = requests.head(url, allow_redirects=False, timeout=DEFAULT_TIMEOUT)
                 if head_response.status_code in (301, 302, 303, 307, 308):
                     new_url = head_response.headers.get('Location')
                     if new_url:
@@ -189,7 +239,7 @@ class PriceWatcher:
                 'Accept': 'text/html,application/xhtml+xml,application/xml',
                 'Accept-Language': 'en-US,en;q=0.9'
             }
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
             logger.info(f"Page fetched, status code: {response.status_code}")
             
             if response.status_code == 200:
@@ -239,67 +289,90 @@ class PriceWatcher:
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
         
+        driver = None
         try:
-            with webdriver.Chrome(options=options) as driver:
-                driver.get(url)
-                logger.info("Page loaded in Selenium")
-                
-                # Wait for page to fully load
-                time.sleep(5)
-                
-                # Walmart-specific selectors for the main product (not sponsored)
-                selectors = [
-                    # Primary main product price
-                    "div[data-testid='price-wrap'] span[itemprop='price']",
-                    # Fallback selectors
-                    "[data-automation-id='product-price']:not([data-automation-id*='sponsored'])",
-                    "[data-testid='price-view'] span",
-                    ".price-characteristic",
-                    ".prod-PriceSection [aria-hidden='false']"
-                ]
-                
-                for selector in selectors:
-                    logger.info(f"Trying selector: {selector}")
-                    try:
-                        # Wait for element to be present
-                        WebDriverWait(driver, 5).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        
-                        # Get all matching elements
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        logger.info(f"Found {len(elements)} elements with selector {selector}")
-                        
-                        if elements:
-                            # Prioritize the first element (usually the main product price)
-                            price_text = elements[0].text.strip()
-                            logger.info(f"Found price text: {price_text}")
-                            print(f"current price {price_text}")  # Debug print
-                            
-                            # Extract numeric price
-                            price = self.extract_price(price_text)
-                            if price is not None:
-                                return price
-                    except TimeoutException:
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error with selector {selector}: {e}")
-                
-                # As a last resort, take a screenshot to debug
+            driver = webdriver.Chrome(options=options)
+            driver.get(url)
+            logger.info("Page loaded in Selenium")
+            
+            # Wait for page to fully load
+            time.sleep(5)
+            
+            # Walmart-specific selectors for the main product (not sponsored)
+            selectors = [
+                # Primary main product price
+                "div[data-testid='price-wrap'] span[itemprop='price']",
+                # Fallback selectors
+                "[data-automation-id='product-price']:not([data-automation-id*='sponsored'])",
+                "[data-testid='price-view'] span",
+                ".price-characteristic",
+                ".prod-PriceSection [aria-hidden='false']"
+            ]
+            
+            for selector in selectors:
+                logger.info(f"Trying selector: {selector}")
                 try:
-                    screenshot_path = f"debug_screenshot_{int(time.time())}.png"
-                    driver.save_screenshot(screenshot_path)
-                    logger.info(f"Saved debug screenshot to {screenshot_path}")
+                    # Wait for element to be present
+                    WebDriverWait(driver, SELENIUM_WAIT_TIME).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    
+                    # Get all matching elements
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    logger.info(f"Found {len(elements)} elements with selector {selector}")
+                    
+                    if elements:
+                        # Prioritize the first element (usually the main product price)
+                        price_text = elements[0].text.strip()
+                        logger.info(f"Found price text: {price_text}")
+                        
+                        # Extract numeric price
+                        price = self.extract_price(price_text)
+                        if price is not None:
+                            return price
+                except TimeoutException:
+                    continue
                 except Exception as e:
-                    logger.error(f"Could not save screenshot: {e}")
+                    logger.error(f"Error with selector {selector}: {e}")
+            
+            # As a last resort, take a screenshot to debug
+            try:
+                timestamp = int(time.time())
+                screenshot_path = f"{SCREENSHOT_DIR}/debug_screenshot_{timestamp}.png"
+                driver.save_screenshot(screenshot_path)
+                logger.info(f"Saved debug screenshot to {screenshot_path}")
                 
-                logger.warning("Could not find price with any selector")
-                return None
+                # Clean up old screenshots (keep only the last 5)
+                self.cleanup_screenshots()
+            except Exception as e:
+                logger.error(f"Could not save screenshot: {e}")
+            
+            logger.warning("Could not find price with any selector")
+            return None
         except Exception as e:
             logger.error(f"Error with Selenium: {e}")
             return None
         finally:
-            logger.info("terminate chrome process...")
+            if driver:
+                try:
+                    driver.quit()
+                    logger.info("Chrome process terminated")
+                except Exception as e:
+                    logger.error(f"Error terminating Chrome: {e}")
+    
+    def cleanup_screenshots(self, max_to_keep=5):
+        """Clean up old screenshots, keeping only the most recent ones"""
+        try:
+            screenshots = [os.path.join(SCREENSHOT_DIR, f) for f in os.listdir(SCREENSHOT_DIR) if f.startswith("debug_screenshot_")]
+            if len(screenshots) > max_to_keep:
+                # Sort by modification time (newest first)
+                screenshots.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                # Remove all but the most recent ones
+                for screenshot in screenshots[max_to_keep:]:
+                    os.remove(screenshot)
+                    logger.debug(f"Removed old screenshot: {screenshot}")
+        except Exception as e:
+            logger.error(f"Error cleaning up screenshots: {e}")
     
     def extract_price(self, price_text):
         """Extract numeric price from text"""
@@ -414,6 +487,9 @@ def main():
     # Check prices command
     check_parser = subparsers.add_parser("check", help="Check prices for all tracked items")
     
+    # Storage option
+    parser.add_argument("--s3", action="store_true", help="Use S3 for storage instead of local files")
+    
     # Parse arguments
     args = parser.parse_args()
     
@@ -435,7 +511,7 @@ def main():
         logger.info("Loaded email configuration from environment variables")
     
     # Initialize price watcher
-    watcher = PriceWatcher(email_config=email_config)
+    watcher = PriceWatcher(email_config=email_config, use_s3=args.s3)
     
     # Process command
     if args.command == "add":
