@@ -23,6 +23,17 @@ def main():
         "Time Tru Women’s Hazel Satchel Bag (Seafoam)"
     )
 
+    watcher.add_item(
+        "https://www.amazon.com/Insta360-Waterproof-Replaceable-Built-Stabilization/dp/B0DZCBYCNY/"
+        "ref=sr_1_1?crid=1KENFC3IND2ES&dib=eyJ2IjoiMSJ9.KZX0ewnf_2RHHNcaG7rR6OO4DZmqUG6-"
+        "LrE45Iy9LYVNS1_zuQYbqKvnDhkpm_g04A7iCSjCRsnD1jIV9l4JnIgNXLkuNKGEPVSipcIF6smFM23y4o"
+        "Mpav7JK_uHTSnKdKF1FJropDvH43sG6AJdoze8kw8tzCuWk09YKt2wQJE5fFm9IgziFZ1q0PiEO50."
+        "Z-ObwUQOeP39qphJIp1_Ht45Ud8kX2zToHZOb9nJt-g&dib_tag=se&keywords=insta360x5%2Bcamera"
+        "&qid=1746290801&sprefix=insta360x5%2Caps%2C131&sr=8-1&th=1",
+        "Insta360 Waterproof Replaceable Built-Stabilization"
+    )
+
+
     # Add more items as needed...
     
     print("Items added successfully!")
