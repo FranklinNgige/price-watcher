@@ -33,6 +33,15 @@ def main():
         "Insta360 Waterproof Replaceable Built-Stabilization"
     )
 
+    watcher.add_item(
+        "https://cusorcart-store.onrender.com/product/"
+        "samsung-galaxy-tab-a9-tablet-11-64gb-android-tablet-big-screen-quad-speakers-"
+        "upgraded-chipset-multi-window-display-slim-light-durable-design-us-version-2024-"
+        "graphite-6729b6b0a9741",
+        "Samsung Galaxy Tab A9 Tablet 11\" 64GB Android Tablet (Graphite)"
+    )
+
+
 
     # Add more items as needed...
     
